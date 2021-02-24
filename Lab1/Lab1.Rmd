@@ -1,0 +1,171 @@
+---
+title: "Lab1"
+author: "RawanGalal"
+date: "2/11/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r load}
+library(tidyverse)
+
+```
+
+```{r }
+data = read_csv("LAB 1 - Online Retail Data.csv")
+data
+```
+
+# 1. Data validation
+## Level 1 –Cells, records, file
+```{r}
+summary(data)
+```
+# 2. DATA CLEANSING
+## Handling negative values and NA's in UnitPrice:
+### about 3.5% of the UnitPrice column is missing, and 1.5% are nulls.
+### I decided to drop these values. If the percentage was higher, I would fill it with the average of the unit price, per stockcode.
+```{r}
+data %>%
+  filter(UnitPrice > 0) -> data
+data
+###droped negative rows(11, 574)
+
+```
+## Remove duplicate rows
+```{r}
+data %>% distinct() %>% arrange(InvoiceNo) -> data
+#unique(data)
+
+
+```
+
+```{r}
+summary(data)
+```
+
+## IQR for UnitPrice is 3
+```{r}
+#data %>% 
+ # filter(!is.na(UnitPrice)) -> data
+  #hist(to_integer(data["UnitPrice"]))
+
+### mutate(across(is.numeric, ~ replace_na(., 0) )) 
+```
+
+
+```{r}
+
+count(data["UnitPrice"])
+
+
+```
+
+  
+### null values successfully removed!
+
+
+## Detecting outliers
+```{r}
+  hist( as.integer(data$UnitPrice), xlim=c(0,40000), breaks=20, ylim=c(0,50)) 
+
+```
+### As the histogram illustrates, there's 1 observation that is considered an outlier: the maximum UnitPrice = 38970.
+
+```{r}
+data %>% arrange(desc(UnitPrice))
+```
+### After further investigation in the data, it turns out that this extreme price corresponds to customer number 15098. This customer performed another transaction with a total price of 297. This is interesting! It shows an unusual behavior for the customer. It could indicate a fraud. So I decided to keep this extreme point.
+
+### Now, we're ready to answer Q1.
+
+```{r}
+##data %>%
+  ##group_by(StockCode)-> grouped_data
+
+##grouped_data%>%
+  ##summarise( avg_price = mean(UnitPrice),
+    ##          UnitPrice= UnitPrice, 
+      ##       UnitPrice_ = replace_na(UnitPrice, avg_price))-> data_
+
+
+
+```
+
+
+## Q1. What is the average price for items shipped international Vs Domestic?
+
+```{r}
+data %>%
+  group_by(Destination) %>%
+  summarize(avg_price = mean(UnitPrice * Quantity))
+
+```
+
+### clearly, items shipped internationally contribute more to our revenue. This might open doors for methods to sustain international customers, or increase the rate of purchase for domestic ones.
+
+### ###############################################
+## Q2: What is the most sold product category?
+
+## Detecting outliers in the Quantity column
+```{r}
+  hist( as.integer(data$Quantity), xlim=c(0,80000), breaks=30, ylim=c(0,40)) 
+
+```
+
+### clearly, there's one extreme point (the Max. Quantity, which equals 80995.00). This point corresponds to a **paper craft, little birdie** product. Again, interesting. Could indicate a fraud, (For a theif throwing a party perhabs!) since that customer only has another transaction where he bought 1 pantry scrubbing brush. or perhaps the customer just started his crafts business! In either cases, This point is too important to exclude from the analysis!
+```{r}
+data %>%
+  group_by(StockCode) %>%
+  mutate(quantity_sold = if_else(Quantity>0, Quantity, 0)) %>%
+  summarise(quantity_per_cat = sum(quantity_sold)) %>%
+ arrange(desc(quantity_per_cat))
+
+
+# sort / take the maximum
+```
+
+
+## -  Answer:  the most sold product category is *23843* which we sold 80995 items from it between 01/12/2010 and 09/12/2011 
+
+# ##############################
+## Q3: What is the most profitable product category?
+### The Revenue column doesn't contain any null values.
+
+
+```{r}
+data %>%
+  group_by(StockCode) %>%
+  summarize(revenue_per_category = sum(Revenue)) %>%
+  arrange(desc(revenue_per_category))
+```
+
+## - Answer: the most profitable product category is *23843*. This category alone increases our revenue by *168469.60*
+## (Technically, Profit = revenue - cost. But since the information of cost isn't available, I used the revenue column only.)
+
+# ####################################################
+## Q4: 4. Which country has the highest cancellation rates .. is it really concerning?
+
+## Detecting outliers for the canceled column.
+```{r}
+  hist( as.integer(data$Canceled), xlim=c(0,2), breaks=20, ylim=c(0,500)) 
+```
+
+### No outliers!
+
+```{r}
+
+##group by country 
+data %>%
+  group_by(Country) %>%
+  summarize(total_cancellation = sum(Canceled), 
+            quantity_sold = sum(Quantity)) %>%
+  arrange(desc(total_cancellation))
+```
+
+## - Answer: the country which has the highest cancellation rates is *United Kingdom* , with total number of cancellations of 4408 + 179 +11 = 4598. 
+## Although this might seem like alot, but this shouldn't be concerning, since the ration of the total_cancellation to the total items sold in the UK is less that .0002!
+## On the other hand, US has a cancellation/sold ration of 0.2. This raises questions and could require further investigation.

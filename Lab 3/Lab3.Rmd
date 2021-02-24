@@ -1,0 +1,358 @@
+---
+title: "Lab3"
+author: "RawanGalal"
+date: "2/22/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(stringr)
+library(lubridate)
+#library(naniar)
+#library(validate)
+library(janitor)
+library(ggpubr)
+```
+```{r}
+spec_csv("atm_data_part1.csv")
+
+```
+#### let's first start with the anlysis of the first 6 months
+
+```{r}
+atm_data1  = read_csv("atm_data_part1.csv")
+atm_data2  = read_csv("atm_data_part2.csv")
+atm_data1
+```
+```{r}
+atm_data <- rbind(atm_data1, atm_data2)
+atm_data
+
+```
+
+```{r}
+atm_data %>% 
+  group_by(atm_id) %>% arrange(atm_id)
+
+```
+#### The data is transactional, in the long format. 
+#### Therefore, the identifier is month, day, hour, atm_id, let's verify that
+```{r}
+atm_data %>%
+  distinct(month, day, hour, atm_id, card_type) %>%
+  arrange(atm_id)
+```
+```{r}
+atm_data %>%
+  distinct(month, day, hour, atm_id, card_type, currency, message_code) %>%
+  arrange(atm_id)
+```
+#### why currency? during the same hour, 2 transactions could happen at the same ATM, with the same card type, but different currencies.
+#### why message_code? during the same hour, 2 transactions could happen at the same ATM, with the same card type, same currencies, but different message codes.
+
+###since data has duplicates, let's verify this visually.
+
+```{r}
+atm_data %>%
+  group_by(month, day, hour, atm_id, card_type, currency, message_code) %>%
+  filter(n()>1) %>%
+  ungroup() %>%
+  arrange(month, day, hour, atm_id, card_type, currency, message_code)
+```
+### drop duplicates
+```{r}
+atm_data_clean <- atm_data %>%
+  distinct(month, day, hour, atm_id, card_type, currency, message_code, .keep_all =TRUE)
+atm_data_clean  #%>% filter(atm_id == 4) %>% arrange(atm_id)
+```
+# #################################
+# Level 1- cells>> Aggregate summary statistics
+```{r}
+atm_data_clean %>%
+  select_if(is.numeric) %>%
+  summary()
+
+```
+#### NA's in message_code indicate that the withdrawal   was made without an error. 
+#### NA's in rain_3h >> decide what to do with them later.
+
+### Categorical columns frequency table
+
+
+```{r}
+#tabyl(atm_data_clean$message_text)
+#tabyl(atm_data_clean$month)
+#tabyl(atm_data_clean$weekday)
+#tabyl(atm_data_clean$atm_status)
+#tabyl(atm_data_clean$atm_manufacturer)
+#tabyl(atm_data_clean$atm_location)
+#tabyl(atm_data_clean$card_type)
+#tabyl(atm_data_clean$currency)
+#tabyl(atm_data_clean$service)
+tabyl(atm_data_clean$message_code)
+```
+
+
+#### from the weekday column, we can see that most of the transactions occur on friday, thursday.
+#### lack of availability possible indicators: message_text, Suspected Malfunction, Suspected malfunction, card retained , Suspected malfunction, no cash dispensed.
+
+#### Suspected Malfunction: The customer’s card issuer could not be contacted during the transaction. The customer should check the card information and try processing the transaction again.
+
+####https://go.eway.io/s/article/Bank-Response-Codes-Responses-00-to-38
+
+#### no null values in all of the categorical columns, great!
+
+
+# ##########################################################
+### Level 1 - b)Pair-wise column consistincies.
+#### message_code VS message_text
+```{r}
+#atm_data_clean %>% arrange(message_code, message_text)
+atm_data_clean %>% distinct(message_code, message_text)
+
+```
+
+```{r}
+atm_data_clean %>% mutate(code_vaildate = case_when(message_code == 4017 ~ 1, TRUE ~ 0)) %>% filter(message_text == "Suspected malfunction, no cash dispensed" ) %>% filter(code_vaildate!=1) 
+```
+```{r}
+atm_data_clean %>% mutate(code_vaildate = case_when(message_code == 4002 ~ 1, TRUE ~ 0)) %>% filter(message_text == "Suspected malfunction" ) %>% filter(code_vaildate!=1) 
+```
+
+```{r}
+atm_data_clean %>% mutate(code_vaildate = case_when(message_code == 4019 ~ 1, TRUE ~ 0)) %>% filter(message_text == "Timed-out taking card, card retained and no cash dispensed" ) %>% filter(code_vaildate!=1) 
+```
+#### all values are matched, great!
+
+```{r}
+atm_data_clean %>% mutate(code_vaildate = case_when(message_code == 4006 ~ 1, TRUE ~ 0)) %>% filter(message_text == "No response received from host" ) %>% filter(code_vaildate!=1) 
+```
+```{r}
+atm_data_clean %>% mutate(code_vaildate = case_when(message_code == 4006 ~ 1, TRUE ~ 0)) %>% filter(message_text == "No response received from host" ) %>% filter(code_vaildate!=1) 
+```
+
+
+
+# Q1
+### 1. ATMs availability: Down times affect ATMs availability hence negatively impact customer experience. In the light of the given data elements, can you support the ATM business with insights on the machine’s availability during 2017? ### If any, are they still active or already replaced?
+### For instance, were there specific ATMs that needed replacement/maintenance? 
+
+#### yes, some machines needed replacement, those which are inactive.
+#### and others needed maintenance, those which produce the following error codes: 4014, 4017, 4002, 4006.
+
+#### my approach: this could be known from message-code or message_text or does he mean inactive?.
+
+#### for each ATM transaction, check the time when it was down.
+
+
+```{r}
+atm_data_clean %>%
+  filter(message_code %in% c(4014, 4017, 4002, 4006)) %>%
+  select(year, month, day, weekday, hour, message_code, atm_status, atm_id, atm_location) %>%
+  arrange(atm_id)
+
+```
+### Feature construction
+
+#### For each machine, I want to get the frequency of  errors, that is; from all the transactions made on this machine, how many times was it not available??.
+```{r}
+atm_data_clean %>%
+  filter(message_code %in% c(4014, 4017, 4002, 4006), atm_id ==1)
+```
+
+```{r}
+atm_data_clean %>% 
+  
+  select(year, month, day, weekday, hour, message_code, atm_status, atm_id, atm_location) %>%
+  group_by(atm_id) %>% 
+ # summarize(year, month, day, weekday, hour, atm_status, atm_id, atm_location, non_available_times =
+   summarize( non_available_times =sum(message_code %in% c(4014, 4017, 4002, 4006)), 
+            No_of_trans_per_atm= n(), 
+            ratio_of_non_available = non_available_times /No_of_trans_per_atm) %>%
+            arrange(desc(ratio_of_non_available)) -> atm_down_data
+atm_down_data
+```
+
+
+#### Since the business has more than 108 ATM's, I decided to report on the top 10 highest ratios.
+#### *During the first 6 months of 2017, the ratio of the not-available ATM's were the highest (1.% to 3.4%) for ATM's with the following ID's: 82, 79, 30, 94, 86, 95, 38, 45, 26, 25. These ATM's correspond to the following locations* :
+```{r}
+atm_data_clean %>%
+distinct(atm_id, atm_location, atm_streetname) %>%
+filter(atm_id %in% c( 82, 79, 30, 94, 86, 95, 38, 45, 26, 25))  
+```
+###  another   method for approaching this question is to get the total amount of time per machine. so for each machine, how many hours/days was it down?
+###  average number of hours per day during which the machine was not available.
+```{r}
+
+atm_data_clean %>%
+  group_by(atm_id)   %>%
+  filter(message_code %in% c(4014, 4017, 4002, 4006)) %>%
+  arrange(atm_id)
+```
+
+### , were there specific ATMs that needed replacement/maintenance?
+If any, are they still active or already replaced?
+
+#### replacement>> if the machine is inactive
+#### maintinance >> if the machine is active, but not avialable(provides the user with error messages)
+```{r}
+atm_data_clean %>% 
+  filter(atm_status == "Active") %>%
+  select(year, month, day, weekday, hour, message_code, atm_status, atm_id, atm_location) %>%
+  group_by(atm_id) %>% 
+ # summarize(year, month, day, weekday, hour, atm_status, atm_id, atm_location, non_available_times =
+   summarize( non_available_times =
+          sum(message_code %in% c(4014, 4017, 4002, 4006)), 
+            No_of_trans_per_atm= n(), 
+            ratio_of_non_available = non_available_times /No_of_trans_per_atm) %>%
+            arrange(desc(ratio_of_non_available)) 
+```
+#### the top-10 machines which needed maintenance where the ones with the following id's: 
+#### 79, 38, 45, 26, 25, 111, 5, 19, 6, 39
+#### These correspond to the following locations:
+
+```{r}
+atm_data_clean %>%
+distinct(atm_id, atm_location, atm_streetname) %>%
+filter(atm_id %in% c( 79, 38, 45, 26, 25, 111, 5, 19, 6, 39))  
+```
+
+```{r}
+atm_data_clean %>% 
+  filter(atm_status == "Inactive") %>%
+  select(year, month, day, weekday, hour, message_code, atm_status, atm_id, atm_location) %>%
+  group_by(atm_id) %>% 
+ # summarize(year, month, day, weekday, hour, atm_status, atm_id, atm_location, non_available_times =
+   summarize( non_available_times =
+          sum(message_code %in% c(4014, 4017, 4002, 4006)), 
+            No_of_trans_per_atm= n(), 
+            ratio_of_non_available = non_available_times /No_of_trans_per_atm) %>%
+            arrange(desc(ratio_of_non_available)) 
+
+```
+
+#### the top-10 machines which need replacement where the ones with the following id's: 
+#### 86, 94, 95, 14, 82, 88, 30, 2, 73, 97.
+#### These correspond to the following locations:
+
+```{r}
+atm_data_clean %>%
+distinct(atm_id, atm_location, atm_streetname) %>%
+filter(atm_id %in% c( 86, 94, 95, 14, 82, 88, 30, 2, 73, 97))  
+```
+####in this dataset, an ATM  machine is either active or inactive; a machine doesn't transition between an active and an inactive status.
+```{r}
+atm_data_clean %>% #ungroup() %>%
+  group_by(atm_id)%>%
+  distinct(atm_status) %>%
+  arrange(atm_id) 
+
+```
+#### 113 rows, which equals the number of ATM machines.
+#### since this is the case, the answer to this question is no. machines which need maintenance are still active.
+
+# ##############################################################################################################
+
+# Q2. 
+## Down times are not only caused by fault in machines. Cash replenishment and regular
+## maintenance activities also cause the ATMs to be out of service for a while.
+## In the light of given data elements, can you propose a high-level schedule for Cash
+## replenishment or regular maintenance activities?
+### Thinking approach>> stay away from rush hours. check the times of the day where there are no transactions/ min amount of transactions>> these will be the suitable times for maintenance.
+
+### bulks of hours,and on weekdays.
+
+
+```{r}
+tabyl(atm_data_clean$weekday)
+```
+
+#### 17% of transactions happen on friday, so *maintenance should be avoided on fridays*
+
+#### Now, let's take a deeper look at the crowded hours of day.
+#### averagy number of transactions per day, for each hour
+```{r}
+atm_data_clean %>% 
+  group_by(hour) %>% 
+  summarise(frequency = n()) %>%
+  arrange(frequency)
+```
+####   of   course, this is too general.
+####A more realistic scenario would depend on machines>> maintenance per ATM: one atm machine could have different rush-hours than another atm.
+```{r}
+atm_data_clean %>% 
+   group_by(atm_id) %>%
+  mutate(No_trans_per_machine = n()) %>%
+  ungroup()%>%
+  group_by(atm_id, hour) %>% 
+ summarise(No_trans_per_machine,  frequency_per_hr = n(), demand_ratio = frequency_per_hr /No_trans_per_machine) %>%
+  distinct(atm_id, hour, No_trans_per_machine, frequency_per_hr, demand_ratio) %>%
+  arrange(desc(demand_ratio)) #%>%
+#  ungroup()  %>%
+  #   total number of transactions for each atm.
+ 
+ # arrange(atm_id)
+```
+#### from the data, 21.7% of the transactions on atm No.97 happen at 10 AM. Therefore, maintenance at these times shoud be avoided.
+
+#### for creating a schedule, we need to check the times where the machine doesn't have a high demand (demand_ratio< 1%). 
+
+```{r}
+atm_data_clean %>% 
+   group_by(atm_id) %>%
+  mutate(No_trans_per_machine = n()) %>%
+  ungroup()%>%
+  group_by(atm_id, hour) %>% 
+ summarise(No_trans_per_machine,  frequency_per_hr = n(), demand_ratio = frequency_per_hr /No_trans_per_machine) %>%
+  distinct(atm_id, hour, No_trans_per_machine, frequency_per_hr, demand_ratio) %>%
+  arrange(demand_ratio) %>%
+  filter(demand_ratio < 0.01) %>%
+  select(atm_id, hour) %>%
+  arrange(atm_id, hour)
+#  ungroup()  %>%
+  #   total number of transactions for each atm.
+ 
+ # arrange(atm_id)
+```
+
+# ############################################
+#### Q3 requires using the atm_location column. so let's explore this column in more depth!
+
+```{r}
+tabyl(atm_data_clean$atm_location)
+
+```
+#Q3. 
+## Bonus: In order to better cater for spar nord customer, we need to understand where to locate
+## our ATMs to ensure maximum coverage. In the light of given data elements, can you name top
+## 10 locations used by our customers?
+
+```{r}
+atm_data_clean %>%
+  group_by(atm_location) %>%
+  summarize( No_of_visits = n()) %>%
+  arrange(desc(No_of_visits)) -> atm_top_visits
+atm_top_visits
+
+```
+#### *the top 10 visited locations during the first 6 months were: Nørresundby, Vejgaard, Bispensgade, Svenstrup, Abildgaard, Hobro, Kolding, Skive, Vestre, Næstved *
+
+```{r}
+head(atm_top_visits, 10)["No_of_visits"]
+
+
+```
+
+```{r}
+barplot(head(atm_top_visits,10)$No_of_visits, names.arg=c("Nørresundby", "Vejgaard", "Bispensgade", "Svenstrup", "Abildgaard", "Hobro", "Kolding", "Skive", "Vestre", "Næstved"), xlab="location", ylab="No. Of visits", col = "purple", ylim = range(pretty(c(0, 27800))))
+
+```
+
+#### the non-availability was during these times of the day:
+#### I NEED TO take time into account. I need to see if this machine has been recently not-available? or what?

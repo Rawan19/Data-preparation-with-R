@@ -1,0 +1,323 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+```{r}
+library(tidyverse)
+library(stringr)
+library(lubridate)
+#library(naniar)
+#library(validate)
+library(janitor)
+library(ggpubr)
+```
+```{r}
+us_census <- read_csv("census_income_original_2.csv",
+                          col_types = cols(
+                            ID = col_character(),
+                            age = col_double(),
+                            workclass = col_character(),
+                            education = col_character(),
+                            education.num = col_double(),
+                            marital.status = col_character(),
+                            occupation = col_character(),
+                            relationship = col_character(),
+                            race  = col_character(),
+                            Gender = col_character(),
+                            capital.gain = col_double(),
+                            capital.loss = col_double(),
+                            hours.per.week = col_double(),
+                            native.country = col_character(),
+                            income = col_character(),
+                            income_c  = col_double()
+                            
+                          ))
+#here, it would drop the rows lw m3refsh yefsel.
+# here, it would read the file, but might replace the "Not applicable" with NA, or behaves randomly. DON'T CONTINUE
+#mesh el -mafrood ta50d qararaat badry in validation>>> b3d ma make sure that it's safe to ignore
+# 1 == NA>> returns NA. NOT FALSE.
+
+
+```
+
+```{r}
+problems(us_census)
+```
+### now we replace the "Not applicable" in the income_c column with nulls.
+
+```{r}
+us_census <- read_csv("census_income_original_2.csv",
+                          col_types = cols(
+                            ID = col_character(),
+                            age = col_double(),
+                            workclass = col_character(),
+                            education = col_character(),
+                            education.num = col_double(),
+                            marital.status = col_character(),
+                            occupation = col_character(),
+                            relationship = col_character(),
+                            race  = col_character(),
+                            Gender = col_character(),
+                            capital.gain = col_double(),
+                            capital.loss = col_double(),
+                            hours.per.week = col_double(),
+                            native.country = col_character(),
+                            income = col_character(),
+                            income_c  = col_character()
+                            
+                          ))
+
+
+
+```
+
+### let's check the Not Applicable columns.
+
+```{r}
+us_census_ch %>% 
+ filter(income_c == "Not applicable")
+```
+### Clearly, there's no pattern for the not applicable rows, so I conclude they should be replaced with the averga price of people with the same income category.(this column will be transformed to an int when calculating average.)
+
+```{r}
+
+##us_census_ch <- NA !!!!!
+#us_census <-us_census %>% replace(income_c, "Not Applicable" , NA_character_) 
+
+us_census[us_census$income_c ==  "Not Applicable"] <- NA_character_
+
+```
+
+```{r}
+us_census %>% nrow()
+as.numeric("11")
+```
+
+#### Not applicable>> tabyl>>> only .0001 percent!>> remove it
+###as.numeric(c("1", "Ham"))>>warning
+# Validation=
+## Level 0 - Format & File structure
+##Validate and fix reading file
+
+##Very first step is to make sure you know your Unique Identifier
+
+##As per the dataset information,ID is the unique identifier
+
+##Once you know your identifier .. check for deuplicates
+##checking for "duplicates" depending on file format wide Vs long
+
+```{r}
+us_census %>% 
+  distinct(ID) %>%
+  nrow()
+
+```
+#### this dataset is in wide format>> this helps in: does this increase voertime?
+#### wide: all details for an observation are in 1 row.
+#### long; 
+#### 1 column over a period of time>> rows (why bring 120 column when u only need 1 ?)
+#### time stamp>> long is better. static, doesn't change over time (demographics, saken feen, )>> wide>> esmak marra w7da
+#### duplicates definition differs from wide to long
+#### long: composite pk. I must know the unique id: else, you could take 3 columns as unique while there are 5.
+#### ID   Time    CallId
+#### 1    1       1
+#### 1    1       2
+## Viewing duplicates
+```{r}
+us_census %>%
+  group_by(ID) %>%
+  filter(n() >1) %>%
+  ungroup() %>%
+  arrange(ID)
+
+```
+
+## remove duplicates
+```{r}
+
+us_census <- us_census %>%
+  distinct(ID, .keep_all = TRUE)
+us_census
+```
+### 60% of the data is null. I WILL NOT FILL IT.
+  
+# ##################
+
+## Level 1 – Cells, records, file
+##a)Aggregate Summary statsitcs 
+
+```{r}
+us_census %>% select_if(is.numeric) %>%
+  summary()
+
+```
+### on first glance:
+### - most of the income_c column consists of NA's.
+### - capital gain is always 0, so we can drop that column.
+### - income_c of 6 looks odd for annual income!
+
+```{r}
+us_census %>%
+  filter(!is.na(income_c)) -> us_census_clean
+us_census_clean
+```
+## Level 1 – Cells, records, file
+##b)Dataset consistency checks "columns cross validation" 
+
+#### income vs income_c
+```{r}
+us_census_clean %>%
+  mutate(income_validate = case_when(income == "<=50K" ~ 1, TRUE ~ 0)) %>%
+  filter(income_validate == 1 && income>50000)
+
+```
+
+```{r}
+us_census_clean %>%
+  mutate(income_validate = case_when(income == ">50K" ~ 1, TRUE ~ 0)) %>%
+  filter(income_validate == 1 && income<=50000)
+
+```
+#### no need to do further adjustments to this pair of columns.
+
+# Q1. Is there a relationship between age and income?
+
+```{r}
+select(us_census_clean, income, age) %>%
+  select_if(is.numeric) %>%
+  summary()
+```
+
+```{r}
+#select(us_census_clean, income, age)
+us_census_clean %>%
+  filter(income == ">50K") %>%
+  select_if(is.numeric) %>%
+  summary()
+```
+### The summary statistic shows us that the median age for the higher income group is greater than the median age of the lower income group. This indicates that older people tend to have salaries >50K. But let's validate this assumption using a box plot.
+
+```{r}
+us_census_clean %>%
+  filter(income == "<=50K") -> us_census_LT_50k
+boxplot(us_census_LT_50k$age)
+```
+### The data is right skewed. most of the people who earn <=50K are aged between 25 and 46
+```{r}
+us_census_clean %>%
+  filter(income == ">50K") -> us_census_GT_50k
+boxplot(us_census_GT_50k$age)
+```
+
+### The data is nearly normal. most of the people who earn >50K are aged between 35 and 52
+```{r}
+plot(us_census_GT_50k$age)
+```
+
+```{r}
+
+plot(us_census_LT_50k$age)
+```
+
+### Answer: There isn't a clear relationship between age and income. However, the scatter plot shows us that the data has more observations of the "<=50K" category than the ">50K".
+
+# ##################################################################
+
+# Q2. Can we say that we have achieved gender equality?
+#### to answer this question, let's first investigate the Gender column.
+```{r}
+us_census_clean 
+```
+
+### It's clear that this column's values needs to be unified into; M and F
+```{r}
+unique(us_census_clean$Gender)
+```
+
+
+```{r}
+us_census_clean %>%
+  mutate(Gender_clean = case_when(tolower(Gender) == "female" ~ "F", tolower(Gender)== "male" ~ "M", Gender == "malee" ~ "M", tolower(Gender) == "m" ~ "M", tolower(Gender) == "f" ~ "F", TRUE ~ "Non")) -> us_census_clean
+```
+
+### checking 
+```{r}
+ # unique(us_census_clean$Gender_clean)
+us_census_clean %>%
+  filter(Gender_clean == "Non")
+```
+
+### Great! It worked!
+### Now, let's start answering the second question.
+
+```{r}
+tabyl(us_census_clean$Gender_clean)
+```
+### In general, there's 38.41% females and 61.58% males in the sample data. (this doesn't give us an indication about inequality). An interesting variable that might determine equality is the workforce; how does the percentage of people working in the private sector differs from males to females?
+
+
+```{r}
+us_census_clean %>%
+  filter(Gender_clean =="M",  workclass == "Private") 
+```
+###  There are 5,602 males working in the private sector.
+
+```{r}
+us_census_clean %>%
+  filter(Gender_clean =="F",  workclass == "Private") 
+```
+### There are 3,631 females working in the private sector.
+### So, assuming that the sample is representative, we didn't reach gender equality yet.
+#### The correct approach is to use a chi-square test to ensure if the difference between the 2 counts is statistically significant.
+
+### now let's investigate teh gender vs the income
+```{r}
+
+tabyl(us_census_GT_50k$Gender )
+
+```
+### Woah!! That's an an ignorable difference! But before concluding, let's take a look at the <50K category.
+
+```{r}
+tabyl(us_census_LT_50k$Gender)
+
+```
+
+### 38% of females, and around 60% of males. This makes us pause and wonder; does the data rpovide convincing evidence about inequality? 
+
+# ######################################################################
+
+# Q3. What other attribute/s could be an income predictor/s?
+### Here, we should use linear regression to test this. the dependant variable is the income_c (since the output variable must be continous, I'll use income_c this time). To decide which variables are good candidates for predictors, we plot education level against income_c.
+```{r}
+unique(us_census_clean$workclass)
+```
+```{r}
+us_census_clean %>%
+  filter(!is.na(income_c)) -> us_census_inc
+
+```
+### let's see if education ccould be a predictor for income_c?
+```{r}
+plot(us_census_inc$education.num, us_census_inc$income_c, xlim = c(0, 15), ylim = c(0, 2000))
+```
+### clearly, there isn't a clear linear relationship between the income_c and the education level.
+
+
+```{r}
+tabyl(us_census_GT_50k$workclass)
+```
+```{r}
+tabyl(us_census_LT_50k$workclass)
+```
+
+
+### There doesn't seem to be huge differences between the 2 categories, so the workclass cannot be used as a predictor(If we wanted to test if the differences were statistically significant, we could've used a z/t test)
+
+
+```{r}
+tabyl(us_census_GT_50k$education)
+
+```
